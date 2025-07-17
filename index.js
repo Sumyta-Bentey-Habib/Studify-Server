@@ -75,6 +75,16 @@ app.get('/booked-sessions', async (req, res) => {
     res.status(500).send({ message: "Internal Server Error" });
   }
 });
+// get materials
+app.get('/materials', async (req, res) => {
+  try {
+    const viewMaterials = await materialsCollection.find().toArray();
+    res.send(viewMaterials);
+  } catch (error) {
+    console.error("Failed to get all materials", error);
+    res.status(500).send({ message: "Internal Server Error" });
+  }
+});
 
 
 
