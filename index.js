@@ -24,6 +24,7 @@ const client = new MongoClient(uri, {
 let sessionsCollection;
 let materialsCollection;
 let bookedSessionsCollection;
+let studentMaterialsCollection;
 
 
 async function run() {
@@ -34,6 +35,7 @@ async function run() {
     sessionsCollection = db.collection("sessions");
     materialsCollection = db.collection("materials");
     bookedSessionsCollection = db.collection("bookedSessions");
+    studentMaterialsCollection = db.collection("studentMaterials");
 
     // Create Session
   app.post('/sessions', async (req, res) => {
@@ -86,7 +88,32 @@ app.get('/materials', async (req, res) => {
   }
 });
 
+// Save a material for a student
+app.post('/student-materials', async (req, res) => {
+  const material = req.body; // expects studentId and material details
+  material.createdAt = new Date();
+  try {
+    const result = await studentMaterialsCollection.insertOne(material);
+    res.send(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ message: "Failed to add student material" });
+  }
+});
 
+
+// get student wish materials
+app.get('/student-materials', async (req, res) => {
+  const { userEmail } = req.query;
+  if (!userEmail) return res.status(400).send({ message: "Missing userEmail" });
+  try {
+    const materials = await studentMaterialsCollection.find({ userEmail }).toArray();
+    res.send(materials);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ message: "Failed to get student materials" });
+  }
+});
 
 
     // Send a ping to confirm a successful connection
