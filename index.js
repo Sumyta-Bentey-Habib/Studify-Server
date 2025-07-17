@@ -23,6 +23,8 @@ const client = new MongoClient(uri, {
 });
 let sessionsCollection;
 let materialsCollection;
+let bookedSessionsCollection;
+
 
 async function run() {
   try {
@@ -30,7 +32,8 @@ async function run() {
     await client.connect();
      const db = client.db("studify");
     sessionsCollection = db.collection("sessions");
-     materialsCollection = db.collection("materials");
+    materialsCollection = db.collection("materials");
+    bookedSessionsCollection = db.collection("bookedSessions");
 
     // Create Session
   app.post('/sessions', async (req, res) => {
@@ -54,11 +57,24 @@ app.post('/materials', async (req, res) => {
   res.send(result);
 });
 
+ // Book a Session
+    app.post('/booked-sessions', async (req, res) => {
+      const bookedSession = req.body;
+      const result = await bookedSessionsCollection.insertOne(bookedSession);
+      res.send(result);
+ });
 
 
-
-
-
+// booked sessions
+app.get('/booked-sessions', async (req, res) => {
+  try {
+    const bookedSessions = await bookedSessionsCollection.find().toArray();
+    res.send(bookedSessions);
+  } catch (error) {
+    console.error("Failed to get booked sessions:", error);
+    res.status(500).send({ message: "Internal Server Error" });
+  }
+});
 
 
 
