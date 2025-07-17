@@ -21,11 +21,36 @@ const client = new MongoClient(uri, {
     deprecationErrors: true,
   }
 });
+let sessionsCollection;
 
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
+     const db = client.db("studify");
+    sessionsCollection = db.collection("sessions");
+    // Create Session
+     app.post('/sessions', async (req, res) => {
+  const session = req.body;
+  const result = await sessionsCollection.insertOne(session);
+  res.send(result);
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log("Pinged your deployment. You successfully connected to MongoDB!");
@@ -37,7 +62,7 @@ async function run() {
 run().catch(console.dir);
 
 app.get('/', (req, res) => {
-  res.send('Hello World!')
+  res.send('Studify')
 })
 
 app.listen(port, () => {
