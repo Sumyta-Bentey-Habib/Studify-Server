@@ -29,15 +29,20 @@ async function run() {
     await client.connect();
      const db = client.db("studify");
     sessionsCollection = db.collection("sessions");
+
     // Create Session
-     app.post('/sessions', async (req, res) => {
+  app.post('/sessions', async (req, res) => {
   const session = req.body;
   const result = await sessionsCollection.insertOne(session);
   res.send(result);
+  });
+
+
+// Get Sessions
+app.get('/sessions', async (req, res) => {
+  const result = await sessionsCollection.find().toArray();
+  res.send(result);
 });
-
-
-
 
 
 
