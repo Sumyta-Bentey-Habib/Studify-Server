@@ -22,6 +22,7 @@ const client = new MongoClient(uri, {
   }
 });
 let sessionsCollection;
+let materialsCollection;
 
 async function run() {
   try {
@@ -29,6 +30,7 @@ async function run() {
     await client.connect();
      const db = client.db("studify");
     sessionsCollection = db.collection("sessions");
+     materialsCollection = db.collection("materials");
 
     // Create Session
   app.post('/sessions', async (req, res) => {
@@ -45,7 +47,12 @@ app.get('/sessions', async (req, res) => {
 });
 
 
-
+// Upload Materials
+app.post('/materials', async (req, res) => {
+  const material = req.body;
+  const result = await materialsCollection.insertOne(material);
+  res.send(result);
+});
 
 
 
