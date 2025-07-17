@@ -25,6 +25,7 @@ let sessionsCollection;
 let materialsCollection;
 let bookedSessionsCollection;
 let studentMaterialsCollection;
+let notesCollection;
 
 
 async function run() {
@@ -36,6 +37,7 @@ async function run() {
     materialsCollection = db.collection("materials");
     bookedSessionsCollection = db.collection("bookedSessions");
     studentMaterialsCollection = db.collection("studentMaterials");
+     notesCollection = db.collection("notes"); 
 
     // Create Session
   app.post('/sessions', async (req, res) => {
@@ -114,6 +116,40 @@ app.get('/student-materials', async (req, res) => {
     res.status(500).send({ message: "Failed to get student materials" });
   }
 });
+  // Create note endpoint
+    app.post('/notes', async (req, res) => {
+      const note = req.body;
+
+      // Validation
+      if (!note.userEmail || !note.title || !note.content) {
+        return res.status(400).send({ message: "Missing required fields" });
+      }
+
+      note.createdAt = note.createdAt || new Date();
+
+      try {
+        const result = await notesCollection.insertOne(note);
+        res.send(result);
+      } catch (err) {
+        console.error("Failed to create note:", err);
+        res.status(500).send({ message: "Failed to create note" });
+      }
+    });
+
+    // Optionally: Get notes for a user
+    app.get('/notes', async (req, res) => {
+      const { userEmail } = req.query;
+      if (!userEmail) return res.status(400).send({ message: "Missing userEmail" });
+
+      try {
+        const notes = await notesCollection.find({ userEmail }).toArray();
+        res.send(notes);
+      } catch (err) {
+        console.error("Failed to fetch notes:", err);
+        res.status(500).send({ message: "Failed to fetch notes" });
+      }
+    });
+
 
 
     // Send a ping to confirm a successful connection
