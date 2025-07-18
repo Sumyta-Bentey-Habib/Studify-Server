@@ -228,6 +228,27 @@ app.post('/admin/upgrade-requests/:id/reject', async (req, res) => {
 
   res.send({ message: "Request rejected." });
 });
+
+app.get('/sessions/:id', async (req, res) => {
+  const id = req.params.id;  
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).send({ message: "Invalid session ID" });
+  }
+
+  try {
+    const session = await sessionsCollection.findOne({ _id: new ObjectId(id) });
+    console.log("Session found:", session);
+
+    if (!session) {
+      return res.status(404).send({ message: "Session not found" });
+    }
+
+    res.send(session);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ message: "Failed to fetch session", error: error.message });
+  }
+});
 // all delete items works
 // DELETE a material by ID
     //  admin delete button
@@ -297,7 +318,6 @@ app.delete('/notes/:id', async (req, res) => {
   if (!ObjectId.isValid(noteId)) {
     return res.status(400).json({ message: 'Invalid note ID' });
   }
-
   try {
     const result = await notesCollection.deleteOne({ _id: new ObjectId(noteId) });
     if (result.deletedCount === 0) {
@@ -309,13 +329,7 @@ app.delete('/notes/:id', async (req, res) => {
     res.status(500).json({ message: 'Failed to delete note' });
   }
 });
-
-
-
-
-
-
-    await client.db("admin").command({ ping: 1 });
+ await client.db("admin").command({ ping: 1 });
     console.log("Connected to MongoDB");
   } finally {
     // Don't close the client
