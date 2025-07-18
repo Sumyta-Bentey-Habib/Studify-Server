@@ -10,26 +10,24 @@ const port = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
-
-// Initialize Firebase Admin SDK
-const serviceAccount = require('./serviceAccountKey.json');
+// ✅ Decode the service key from Base64 in env
+const decodedKey = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8');
+const serviceAccount = JSON.parse(decodedKey);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
 
-// JWT verification middleware
+// ✅ JWT verification middleware stays the same
 const verifyFirebaseToken = async (req, res, next) => {
   const authHeader = req.headers.authorization || '';
   const token = authHeader.split(' ')[1];
-
   if (!token) {
     return res.status(401).send({ message: 'Unauthorized: No token provided' });
   }
-
   try {
     const decodedToken = await admin.auth().verifyIdToken(token);
-    req.user = decodedToken; 
+    req.user = decodedToken;
     next();
   } catch (error) {
     console.error('Token verification failed:', error);
@@ -58,7 +56,7 @@ let upgradeRequestsCollection;
 
 async function run() {
   try {
-    await client.connect();
+    //await client.connect();
     const db = client.db("studify");
     sessionsCollection = db.collection("sessions");
     materialsCollection = db.collection("materials");
@@ -352,8 +350,7 @@ async function run() {
       }
     });
 
-    await client.db("admin").command({ ping: 1 });
-    console.log("✅ Connected to MongoDB");
+   
   } finally {
     // Keep connection alive
   }
