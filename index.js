@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const admin = require('firebase-admin');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -10,6 +11,33 @@ const port = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// Initialize Firebase Admin SDK
+const serviceAccount = require('./serviceAccountKey.json');
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
+
+// JWT verification middleware
+const verifyFirebaseToken = async (req, res, next) => {
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.split(' ')[1];
+
+  if (!token) {
+    return res.status(401).send({ message: 'Unauthorized: No token provided' });
+  }
+
+  try {
+    const decodedToken = await admin.auth().verifyIdToken(token);
+    req.user = decodedToken; 
+    next();
+  } catch (error) {
+    console.error('Token verification failed:', error);
+    return res.status(401).send({ message: 'Unauthorized: Invalid token' });
+  }
+};
+
+// MongoDB setup
 const uri = `mongodb+srv://${process.env.DB_USERS}:${process.env.DB_PASSWORD}@cluster0.uteipwi.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
 const client = new MongoClient(uri, {
@@ -20,7 +48,6 @@ const client = new MongoClient(uri, {
   },
 });
 
-// Collections
 let sessionsCollection;
 let materialsCollection;
 let bookedSessionsCollection;
@@ -42,7 +69,7 @@ async function run() {
     upgradeRequestsCollection = db.collection("upgradeRequests");
 
     // Sessions
-    app.post('/sessions', async (req, res) => {
+    app.post('/sessions', verifyFirebaseToken, async (req, res) => {
       const session = req.body;
       const result = await sessionsCollection.insertOne(session);
       res.send(result);
@@ -55,16 +82,14 @@ async function run() {
 
     app.get('/sessions/:id', async (req, res) => {
       const id = req.params.id;
-      if (!ObjectId.isValid(id)) {
-        return res.status(400).send({ message: "Invalid session ID" });
-      }
+      if (!ObjectId.isValid(id)) return res.status(400).send({ message: "Invalid session ID" });
       const session = await sessionsCollection.findOne({ _id: new ObjectId(id) });
       if (!session) return res.status(404).send({ message: "Session not found" });
       res.send(session);
     });
 
     // Materials
-    app.post('/materials', async (req, res) => {
+    app.post('/materials', verifyFirebaseToken, async (req, res) => {
       const material = req.body;
       const result = await materialsCollection.insertOne(material);
       res.send(result);
@@ -76,21 +101,19 @@ async function run() {
     });
 
     // Booked Sessions
-    app.post('/booked-sessions', async (req, res) => {
+    app.post('/booked-sessions', verifyFirebaseToken, async (req, res) => {
       const bookedSession = req.body;
+      if (!bookedSession.sessionId) return res.status(400).send({ message: "Missing sessionId" });
 
-      if (!bookedSession.sessionId || !bookedSession.studentEmail) {
-        return res.status(400).send({ message: "Missing required fields: sessionId and studentEmail" });
-      }
+      // Use email from verified token
+      bookedSession.studentEmail = req.user.email;
 
       const existingBooking = await bookedSessionsCollection.findOne({
         sessionId: bookedSession.sessionId,
         studentEmail: bookedSession.studentEmail,
       });
 
-      if (existingBooking) {
-        return res.status(409).send({ message: "Session already booked by this user" });
-      }
+      if (existingBooking) return res.status(409).send({ message: "Session already booked by this user" });
 
       bookedSession.paid = false;
       bookedSession.bookedAt = new Date();
@@ -99,85 +122,60 @@ async function run() {
       res.send(result);
     });
 
-    // ✅ NEW: Check for existing booking before creating duplicate
-    app.get('/booked-sessions/find', async (req, res) => {
-      const { sessionId, studentEmail } = req.query;
-      if (!sessionId || !studentEmail) {
-        return res.status(400).send({ message: "Missing sessionId or studentEmail" });
-      }
-
-      const booking = await bookedSessionsCollection.findOne({
-        sessionId,
-        studentEmail,
-      });
-
-      if (!booking) return res.status(404).send({ message: "Booking not found" });
-      res.send(booking);
+    app.get('/booked-sessions', verifyFirebaseToken, async (req, res) => {
+      const bookings = await bookedSessionsCollection.find({ studentEmail: req.user.email }).toArray();
+      res.send(bookings);
     });
 
-    app.get('/booked-sessions', async (req, res) => {
-      const bookedSessions = await bookedSessionsCollection.find().toArray();
-      res.send(bookedSessions);
-    });
-
-    app.patch('/booked-sessions/:id/mark-paid', async (req, res) => {
+    app.patch('/booked-sessions/:id/mark-paid', verifyFirebaseToken, async (req, res) => {
       const bookingId = req.params.id;
-      if (!ObjectId.isValid(bookingId)) {
-        return res.status(400).send({ message: "Invalid booking ID" });
-      }
+      if (!ObjectId.isValid(bookingId)) return res.status(400).send({ message: "Invalid booking ID" });
 
       const result = await bookedSessionsCollection.updateOne(
         { _id: new ObjectId(bookingId) },
         { $set: { paid: true } }
       );
 
-      if (result.matchedCount === 0) {
-        return res.status(404).send({ message: "Booking not found" });
-      }
+      if (result.matchedCount === 0) return res.status(404).send({ message: "Booking not found" });
 
       res.send({ message: "Booking marked as paid successfully" });
     });
 
     // Student Materials
-    app.post('/student-materials', async (req, res) => {
+    app.post('/student-materials', verifyFirebaseToken, async (req, res) => {
       const material = req.body;
+      material.userEmail = req.user.email;
       material.createdAt = new Date();
       const result = await studentMaterialsCollection.insertOne(material);
       res.send(result);
     });
 
-    app.get('/student-materials', async (req, res) => {
-      const { userEmail } = req.query;
-      if (!userEmail) return res.status(400).send({ message: "Missing userEmail" });
-      const materials = await studentMaterialsCollection.find({ userEmail }).toArray();
+    app.get('/student-materials', verifyFirebaseToken, async (req, res) => {
+      const materials = await studentMaterialsCollection.find({ userEmail: req.user.email }).toArray();
       res.send(materials);
     });
 
     // Notes
-    app.post('/notes', async (req, res) => {
+    app.post('/notes', verifyFirebaseToken, async (req, res) => {
       const note = req.body;
-      if (!note.userEmail || !note.title || !note.content) {
-        return res.status(400).send({ message: "Missing required fields" });
-      }
+      if (!note.title || !note.content) return res.status(400).send({ message: "Missing required fields" });
+      note.userEmail = req.user.email;
       note.createdAt = new Date();
       const result = await notesCollection.insertOne(note);
       res.send(result);
     });
 
-    app.get('/notes', async (req, res) => {
-      const { userEmail } = req.query;
-      if (!userEmail) return res.status(400).send({ message: "Missing userEmail" });
-      const notes = await notesCollection.find({ userEmail }).toArray();
+    app.get('/notes', verifyFirebaseToken, async (req, res) => {
+      const notes = await notesCollection.find({ userEmail: req.user.email }).toArray();
       res.send(notes);
     });
 
-    // Users
-    app.post('/users', async (req, res) => {
+    // Users - FORCE role to 'student'
+    app.post('/users', verifyFirebaseToken, async (req, res) => {
       const user = req.body;
-      if (!user.name || !user.email || user.name.trim().length === 0 || user.name.trim().toUpperCase() === "N/A") {
-        return res.status(400).send({ message: "Missing or invalid name or email" });
-      }
-      user.role = user.role || "student";
+      if (!user.name || !user.email) return res.status(400).send({ message: "Missing name or email" });
+
+      user.role = "student"; // force role here
       user.createdAt = new Date();
 
       const existing = await usersCollection.findOne({ email: user.email });
@@ -187,19 +185,19 @@ async function run() {
       res.send(result);
     });
 
-    app.get('/users', async (req, res) => {
+    app.get('/users', verifyFirebaseToken, async (req, res) => {
       const users = await usersCollection.find().toArray();
       res.send(users);
     });
 
-    app.get('/users/:email', async (req, res) => {
+    app.get('/users/:email', verifyFirebaseToken, async (req, res) => {
       const email = req.params.email;
       const user = await usersCollection.findOne({ email });
       if (!user) return res.status(404).send({ message: "User not found" });
       res.send(user);
     });
 
-    app.patch('/users/:id/role', async (req, res) => {
+    app.patch('/users/:id/role', verifyFirebaseToken, async (req, res) => {
       const userId = req.params.id;
       const { role } = req.body;
       if (!role) return res.status(400).send({ message: "Missing role" });
@@ -208,16 +206,16 @@ async function run() {
         { _id: new ObjectId(userId) },
         { $set: { role } }
       );
-      if (result.matchedCount === 0) {
-        return res.status(404).send({ message: "User not found" });
-      }
+
+      if (result.matchedCount === 0) return res.status(404).send({ message: "User not found" });
+
       res.send({ message: "Role updated successfully" });
     });
 
     // Upgrade Requests
-    app.post('/upgrade-request', async (req, res) => {
-      const { userEmail, message } = req.body;
-      if (!userEmail) return res.status(400).json({ message: "Missing userEmail" });
+    app.post('/upgrade-request', verifyFirebaseToken, async (req, res) => {
+      const message = req.body.message;
+      const userEmail = req.user.email;
 
       const user = await usersCollection.findOne({ email: userEmail });
       if (!user) return res.status(404).json({ message: "User not found" });
@@ -240,14 +238,13 @@ async function run() {
       res.status(201).json({ message: "Upgrade request submitted", request: newRequest });
     });
 
-    app.get('/admin/upgrade-requests', async (req, res) => {
+    app.get('/admin/upgrade-requests', verifyFirebaseToken, async (req, res) => {
       const requests = await upgradeRequestsCollection.find().toArray();
       res.send(requests);
     });
 
-    app.post('/admin/upgrade-requests/:id/approve', async (req, res) => {
+    app.post('/admin/upgrade-requests/:id/approve', verifyFirebaseToken, async (req, res) => {
       const requestId = req.params.id;
-
       const request = await upgradeRequestsCollection.findOne({ _id: new ObjectId(requestId) });
       if (!request) return res.status(404).json({ message: "Upgrade request not found" });
 
@@ -264,9 +261,8 @@ async function run() {
       res.send({ message: "Request approved & user upgraded to mentor." });
     });
 
-    app.post('/admin/upgrade-requests/:id/reject', async (req, res) => {
+    app.post('/admin/upgrade-requests/:id/reject', verifyFirebaseToken, async (req, res) => {
       const requestId = req.params.id;
-
       const request = await upgradeRequestsCollection.findOne({ _id: new ObjectId(requestId) });
       if (!request) return res.status(404).json({ message: "Upgrade request not found" });
 
@@ -279,50 +275,46 @@ async function run() {
     });
 
     // Delete routes
-    app.delete('/materials/:id', async (req, res) => {
+    app.delete('/materials/:id', verifyFirebaseToken, async (req, res) => {
       const id = req.params.id;
       const result = await materialsCollection.deleteOne({ _id: new ObjectId(id) });
       if (result.deletedCount === 0) return res.status(404).send({ message: "Material not found" });
       res.send({ message: "Material deleted successfully" });
     });
 
-    app.delete('/sessions/:id', async (req, res) => {
+    app.delete('/sessions/:id', verifyFirebaseToken, async (req, res) => {
       const id = req.params.id;
       const result = await sessionsCollection.deleteOne({ _id: new ObjectId(id) });
       if (result.deletedCount === 0) return res.status(404).send({ message: "Session not found" });
       res.send({ message: "Session deleted successfully" });
     });
 
-    app.delete('/users/:id', async (req, res) => {
+    app.delete('/users/:id', verifyFirebaseToken, async (req, res) => {
       const userId = req.params.id;
       const result = await usersCollection.deleteOne({ _id: new ObjectId(userId) });
       if (result.deletedCount === 0) return res.status(404).send({ message: "User not found" });
       res.send({ message: "User deleted successfully" });
     });
 
-    app.delete('/booked-sessions/:id', async (req, res) => {
+    app.delete('/booked-sessions/:id', verifyFirebaseToken, async (req, res) => {
       const id = req.params.id;
       const result = await bookedSessionsCollection.deleteOne({ _id: new ObjectId(id) });
       if (result.deletedCount === 0) return res.status(404).send({ message: "Booked session not found" });
       res.send({ message: "Booked session deleted successfully" });
     });
 
-    app.delete('/notes/:id', async (req, res) => {
+    app.delete('/notes/:id', verifyFirebaseToken, async (req, res) => {
       const noteId = req.params.id;
-      if (!ObjectId.isValid(noteId)) return res.status(400).json({ message: 'Invalid note ID' });
-
+      if (!ObjectId.isValid(noteId)) return res.status(400).send({ message: 'Invalid note ID' });
       const result = await notesCollection.deleteOne({ _id: new ObjectId(noteId) });
-      if (result.deletedCount === 0) return res.status(404).json({ message: 'Note not found' });
-      res.json({ message: 'Note deleted successfully' });
+      if (result.deletedCount === 0) return res.status(404).send({ message: 'Note not found' });
+      res.send({ message: 'Note deleted successfully' });
     });
 
     // Stripe checkout session creation
-    app.post('/create-checkout-session', async (req, res) => {
+    app.post('/create-checkout-session', verifyFirebaseToken, async (req, res) => {
       const { sessionId, title, amount, bookedSessionId } = req.body;
-
-      if (!title || !amount || !bookedSessionId) {
-        return res.status(400).json({ error: "Missing title, amount or bookedSessionId" });
-      }
+      if (!title || !amount || !bookedSessionId) return res.status(400).json({ error: "Missing title, amount or bookedSessionId" });
 
       const session = await stripe.checkout.sessions.create({
         payment_method_types: ['card'],
@@ -335,7 +327,7 @@ async function run() {
           },
           quantity: 1,
         }],
-        success_url: `${process.env.CLIENT_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+        success_url: `${process.env.CLIENT_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${process.env.CLIENT_URL}/cancel`,
         client_reference_id: bookedSessionId,
       });
@@ -343,7 +335,7 @@ async function run() {
       res.json({ url: session.url });
     });
 
-    app.get('/verify-payment-session', async (req, res) => {
+    app.get('/verify-payment-session', verifyFirebaseToken, async (req, res) => {
       const { sessionId } = req.query;
       if (!sessionId) return res.status(400).json({ paid: false });
 
@@ -363,14 +355,14 @@ async function run() {
     await client.db("admin").command({ ping: 1 });
     console.log("✅ Connected to MongoDB");
   } finally {
-    // keep connection open
+    // Keep connection alive
   }
 }
 
 run().catch(console.dir);
 
 app.get('/', (req, res) => {
-  res.send('✅ Studify server running!');
+  res.send('✅ Studify server running with Firebase JWT auth and default student role!');
 });
 
 app.listen(port, () => {
