@@ -228,6 +228,92 @@ app.post('/admin/upgrade-requests/:id/reject', async (req, res) => {
 
   res.send({ message: "Request rejected." });
 });
+// all delete items works
+// DELETE a material by ID
+    //  admin delete button
+app.delete('/materials/:id', async (req, res) => {
+  const id = req.params.id;
+  try {
+    const result = await materialsCollection.deleteOne({ _id: new ObjectId(id) });
+    if (result.deletedCount === 0) {
+      return res.status(404).send({ message: "Material not found" });
+    }
+    res.send({ message: "Material deleted successfully" });
+  } catch (error) {
+    res.status(500).send({ message: "Failed to delete material", error: error.message });
+  }
+});
+// DELETE a session by ID
+app.delete('/sessions/:id', async (req, res) => {
+  const id = req.params.id;
+  try {
+    const result = await sessionsCollection.deleteOne({ _id: new ObjectId(id) });
+    if (result.deletedCount === 0) {
+      return res.status(404).send({ message: "Session not found" });
+    }
+    res.send({ message: "Session deleted successfully" });
+  } catch (error) {
+    res.status(500).send({ message: "Failed to delete session", error: error.message });
+  }
+});
+// DELETE a user by ID
+app.delete('/users/:id', async (req, res) => {
+  const userId = req.params.id;
+
+  try {
+    const result = await usersCollection.deleteOne({ _id: new ObjectId(userId) });
+    if (result.deletedCount === 0) {
+      return res.status(404).send({ message: "User not found" });
+    }
+
+    res.send({ message: "User deleted successfully" });
+  } catch (err) {
+    res.status(500).send({ message: "Failed to delete user", error: err.message });
+  }
+});
+// DELETE booked session by ID
+app.delete('/booked-sessions/:id', async (req, res) => {
+  const id = req.params.id;
+  const result = await bookedSessionsCollection.deleteOne({ _id: new ObjectId(id) });
+  if (result.deletedCount === 0) {
+    return res.status(404).send({ message: "Booked session not found" });
+  }
+  res.send({ message: "Booked session deleted successfully" });
+});
+// DELETE material by ID
+app.delete('/materials/:id', async (req, res) => {
+  const id = req.params.id;
+  const result = await materialsCollection.deleteOne({ _id: new ObjectId(id) });
+  if (result.deletedCount === 0) {
+    return res.status(404).send({ message: "Material not found" });
+  }
+  res.send({ message: "Material deleted successfully" });
+});
+
+// DELETE /notes/:id
+app.delete('/notes/:id', async (req, res) => {
+  const noteId = req.params.id;
+
+  if (!ObjectId.isValid(noteId)) {
+    return res.status(400).json({ message: 'Invalid note ID' });
+  }
+
+  try {
+    const result = await notesCollection.deleteOne({ _id: new ObjectId(noteId) });
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ message: 'Note not found' });
+    }
+    res.json({ message: 'Note deleted successfully' });
+  } catch (err) {
+    console.error('Error deleting note:', err);
+    res.status(500).json({ message: 'Failed to delete note' });
+  }
+});
+
+
+
+
+
 
     await client.db("admin").command({ ping: 1 });
     console.log("Connected to MongoDB");
