@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -19,7 +20,7 @@ const client = new MongoClient(uri, {
   },
 });
 
-//  Collections
+// Collections
 let sessionsCollection;
 let materialsCollection;
 let bookedSessionsCollection;
@@ -40,7 +41,7 @@ async function run() {
     usersCollection = db.collection("users");
     upgradeRequestsCollection = db.collection("upgradeRequests");
 
-    //  Sessions
+    // Sessions
     app.post('/sessions', async (req, res) => {
       const session = req.body;
       const result = await sessionsCollection.insertOne(session);
@@ -50,6 +51,16 @@ async function run() {
     app.get('/sessions', async (req, res) => {
       const result = await sessionsCollection.find().toArray();
       res.send(result);
+    });
+
+    app.get('/sessions/:id', async (req, res) => {
+      const id = req.params.id;
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({ message: "Invalid session ID" });
+      }
+      const session = await sessionsCollection.findOne({ _id: new ObjectId(id) });
+      if (!session) return res.status(404).send({ message: "Session not found" });
+      res.send(session);
     });
 
     // Materials
@@ -64,16 +75,67 @@ async function run() {
       res.send(materials);
     });
 
-    //  Booked Sessions
+    // Booked Sessions
     app.post('/booked-sessions', async (req, res) => {
       const bookedSession = req.body;
+
+      if (!bookedSession.sessionId || !bookedSession.studentEmail) {
+        return res.status(400).send({ message: "Missing required fields: sessionId and studentEmail" });
+      }
+
+      const existingBooking = await bookedSessionsCollection.findOne({
+        sessionId: bookedSession.sessionId,
+        studentEmail: bookedSession.studentEmail,
+      });
+
+      if (existingBooking) {
+        return res.status(409).send({ message: "Session already booked by this user" });
+      }
+
+      bookedSession.paid = false;
+      bookedSession.bookedAt = new Date();
+
       const result = await bookedSessionsCollection.insertOne(bookedSession);
       res.send(result);
+    });
+
+    // ✅ NEW: Check for existing booking before creating duplicate
+    app.get('/booked-sessions/find', async (req, res) => {
+      const { sessionId, studentEmail } = req.query;
+      if (!sessionId || !studentEmail) {
+        return res.status(400).send({ message: "Missing sessionId or studentEmail" });
+      }
+
+      const booking = await bookedSessionsCollection.findOne({
+        sessionId,
+        studentEmail,
+      });
+
+      if (!booking) return res.status(404).send({ message: "Booking not found" });
+      res.send(booking);
     });
 
     app.get('/booked-sessions', async (req, res) => {
       const bookedSessions = await bookedSessionsCollection.find().toArray();
       res.send(bookedSessions);
+    });
+
+    app.patch('/booked-sessions/:id/mark-paid', async (req, res) => {
+      const bookingId = req.params.id;
+      if (!ObjectId.isValid(bookingId)) {
+        return res.status(400).send({ message: "Invalid booking ID" });
+      }
+
+      const result = await bookedSessionsCollection.updateOne(
+        { _id: new ObjectId(bookingId) },
+        { $set: { paid: true } }
+      );
+
+      if (result.matchedCount === 0) {
+        return res.status(404).send({ message: "Booking not found" });
+      }
+
+      res.send({ message: "Booking marked as paid successfully" });
     });
 
     // Student Materials
@@ -91,7 +153,7 @@ async function run() {
       res.send(materials);
     });
 
-    //  Notes
+    // Notes
     app.post('/notes', async (req, res) => {
       const note = req.body;
       if (!note.userEmail || !note.title || !note.content) {
@@ -109,19 +171,12 @@ async function run() {
       res.send(notes);
     });
 
-    //  Users
+    // Users
     app.post('/users', async (req, res) => {
       const user = req.body;
-
-      if (
-        !user.name || 
-        !user.email || 
-        user.name.trim().length === 0 || 
-        user.name.trim().toUpperCase() === "N/A"
-      ) {
+      if (!user.name || !user.email || user.name.trim().length === 0 || user.name.trim().toUpperCase() === "N/A") {
         return res.status(400).send({ message: "Missing or invalid name or email" });
       }
-
       user.role = user.role || "student";
       user.createdAt = new Date();
 
@@ -132,14 +187,9 @@ async function run() {
       res.send(result);
     });
 
-    // all users
     app.get('/users', async (req, res) => {
-      try {
-        const users = await usersCollection.find().toArray();
-        res.send(users);
-      } catch (err) {
-        res.status(500).send({ message: 'Error fetching users', error: err.message });
-      }
+      const users = await usersCollection.find().toArray();
+      res.send(users);
     });
 
     app.get('/users/:email', async (req, res) => {
@@ -153,6 +203,7 @@ async function run() {
       const userId = req.params.id;
       const { role } = req.body;
       if (!role) return res.status(400).send({ message: "Missing role" });
+
       const result = await usersCollection.updateOne(
         { _id: new ObjectId(userId) },
         { $set: { role } }
@@ -163,7 +214,7 @@ async function run() {
       res.send({ message: "Role updated successfully" });
     });
 
-    //  Upgrade Request - student sends request
+    // Upgrade Requests
     app.post('/upgrade-request', async (req, res) => {
       const { userEmail, message } = req.body;
       if (!userEmail) return res.status(400).json({ message: "Missing userEmail" });
@@ -173,7 +224,7 @@ async function run() {
 
       const existing = await upgradeRequestsCollection.findOne({
         userId: user._id.toString(),
-        status: "pending"
+        status: "pending",
       });
 
       if (existing) return res.status(400).json({ message: "Upgrade request already pending" });
@@ -189,13 +240,11 @@ async function run() {
       res.status(201).json({ message: "Upgrade request submitted", request: newRequest });
     });
 
-    //  Admin - Get all upgrade requests
     app.get('/admin/upgrade-requests', async (req, res) => {
       const requests = await upgradeRequestsCollection.find().toArray();
       res.send(requests);
     });
 
-    // Admin - Approve request by ID
     app.post('/admin/upgrade-requests/:id/approve', async (req, res) => {
       const requestId = req.params.id;
 
@@ -214,132 +263,114 @@ async function run() {
 
       res.send({ message: "Request approved & user upgraded to mentor." });
     });
-    // Admin - Reject request by ID
-app.post('/admin/upgrade-requests/:id/reject', async (req, res) => {
-  const requestId = req.params.id;
 
-  const request = await upgradeRequestsCollection.findOne({ _id: new ObjectId(requestId) });
-  if (!request) return res.status(404).json({ message: "Upgrade request not found" });
+    app.post('/admin/upgrade-requests/:id/reject', async (req, res) => {
+      const requestId = req.params.id;
 
-  await upgradeRequestsCollection.updateOne(
-    { _id: new ObjectId(requestId) },
-    { $set: { status: "rejected" } }
-  );
+      const request = await upgradeRequestsCollection.findOne({ _id: new ObjectId(requestId) });
+      if (!request) return res.status(404).json({ message: "Upgrade request not found" });
 
-  res.send({ message: "Request rejected." });
-});
+      await upgradeRequestsCollection.updateOne(
+        { _id: new ObjectId(requestId) },
+        { $set: { status: "rejected" } }
+      );
 
-app.get('/sessions/:id', async (req, res) => {
-  const id = req.params.id;  
-  if (!ObjectId.isValid(id)) {
-    return res.status(400).send({ message: "Invalid session ID" });
-  }
+      res.send({ message: "Request rejected." });
+    });
 
-  try {
-    const session = await sessionsCollection.findOne({ _id: new ObjectId(id) });
-    console.log("Session found:", session);
+    // Delete routes
+    app.delete('/materials/:id', async (req, res) => {
+      const id = req.params.id;
+      const result = await materialsCollection.deleteOne({ _id: new ObjectId(id) });
+      if (result.deletedCount === 0) return res.status(404).send({ message: "Material not found" });
+      res.send({ message: "Material deleted successfully" });
+    });
 
-    if (!session) {
-      return res.status(404).send({ message: "Session not found" });
-    }
+    app.delete('/sessions/:id', async (req, res) => {
+      const id = req.params.id;
+      const result = await sessionsCollection.deleteOne({ _id: new ObjectId(id) });
+      if (result.deletedCount === 0) return res.status(404).send({ message: "Session not found" });
+      res.send({ message: "Session deleted successfully" });
+    });
 
-    res.send(session);
-  } catch (error) {
-    console.error(error);
-    res.status(500).send({ message: "Failed to fetch session", error: error.message });
-  }
-});
-// all delete items works
-// DELETE a material by ID
-    //  admin delete button
-app.delete('/materials/:id', async (req, res) => {
-  const id = req.params.id;
-  try {
-    const result = await materialsCollection.deleteOne({ _id: new ObjectId(id) });
-    if (result.deletedCount === 0) {
-      return res.status(404).send({ message: "Material not found" });
-    }
-    res.send({ message: "Material deleted successfully" });
-  } catch (error) {
-    res.status(500).send({ message: "Failed to delete material", error: error.message });
-  }
-});
-// DELETE a session by ID
-app.delete('/sessions/:id', async (req, res) => {
-  const id = req.params.id;
-  try {
-    const result = await sessionsCollection.deleteOne({ _id: new ObjectId(id) });
-    if (result.deletedCount === 0) {
-      return res.status(404).send({ message: "Session not found" });
-    }
-    res.send({ message: "Session deleted successfully" });
-  } catch (error) {
-    res.status(500).send({ message: "Failed to delete session", error: error.message });
-  }
-});
-// DELETE a user by ID
-app.delete('/users/:id', async (req, res) => {
-  const userId = req.params.id;
+    app.delete('/users/:id', async (req, res) => {
+      const userId = req.params.id;
+      const result = await usersCollection.deleteOne({ _id: new ObjectId(userId) });
+      if (result.deletedCount === 0) return res.status(404).send({ message: "User not found" });
+      res.send({ message: "User deleted successfully" });
+    });
 
-  try {
-    const result = await usersCollection.deleteOne({ _id: new ObjectId(userId) });
-    if (result.deletedCount === 0) {
-      return res.status(404).send({ message: "User not found" });
-    }
+    app.delete('/booked-sessions/:id', async (req, res) => {
+      const id = req.params.id;
+      const result = await bookedSessionsCollection.deleteOne({ _id: new ObjectId(id) });
+      if (result.deletedCount === 0) return res.status(404).send({ message: "Booked session not found" });
+      res.send({ message: "Booked session deleted successfully" });
+    });
 
-    res.send({ message: "User deleted successfully" });
-  } catch (err) {
-    res.status(500).send({ message: "Failed to delete user", error: err.message });
-  }
-});
-// DELETE booked session by ID
-app.delete('/booked-sessions/:id', async (req, res) => {
-  const id = req.params.id;
-  const result = await bookedSessionsCollection.deleteOne({ _id: new ObjectId(id) });
-  if (result.deletedCount === 0) {
-    return res.status(404).send({ message: "Booked session not found" });
-  }
-  res.send({ message: "Booked session deleted successfully" });
-});
-// DELETE material by ID
-app.delete('/materials/:id', async (req, res) => {
-  const id = req.params.id;
-  const result = await materialsCollection.deleteOne({ _id: new ObjectId(id) });
-  if (result.deletedCount === 0) {
-    return res.status(404).send({ message: "Material not found" });
-  }
-  res.send({ message: "Material deleted successfully" });
-});
+    app.delete('/notes/:id', async (req, res) => {
+      const noteId = req.params.id;
+      if (!ObjectId.isValid(noteId)) return res.status(400).json({ message: 'Invalid note ID' });
 
-// DELETE /notes/:id
-app.delete('/notes/:id', async (req, res) => {
-  const noteId = req.params.id;
+      const result = await notesCollection.deleteOne({ _id: new ObjectId(noteId) });
+      if (result.deletedCount === 0) return res.status(404).json({ message: 'Note not found' });
+      res.json({ message: 'Note deleted successfully' });
+    });
 
-  if (!ObjectId.isValid(noteId)) {
-    return res.status(400).json({ message: 'Invalid note ID' });
-  }
-  try {
-    const result = await notesCollection.deleteOne({ _id: new ObjectId(noteId) });
-    if (result.deletedCount === 0) {
-      return res.status(404).json({ message: 'Note not found' });
-    }
-    res.json({ message: 'Note deleted successfully' });
-  } catch (err) {
-    console.error('Error deleting note:', err);
-    res.status(500).json({ message: 'Failed to delete note' });
-  }
-});
- await client.db("admin").command({ ping: 1 });
-    console.log("Connected to MongoDB");
+    // Stripe checkout session creation
+    app.post('/create-checkout-session', async (req, res) => {
+      const { sessionId, title, amount, bookedSessionId } = req.body;
+
+      if (!title || !amount || !bookedSessionId) {
+        return res.status(400).json({ error: "Missing title, amount or bookedSessionId" });
+      }
+
+      const session = await stripe.checkout.sessions.create({
+        payment_method_types: ['card'],
+        mode: 'payment',
+        line_items: [{
+          price_data: {
+            currency: 'usd',
+            product_data: { name: title },
+            unit_amount: amount,
+          },
+          quantity: 1,
+        }],
+        success_url: `${process.env.CLIENT_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${process.env.CLIENT_URL}/cancel`,
+        client_reference_id: bookedSessionId,
+      });
+
+      res.json({ url: session.url });
+    });
+
+    app.get('/verify-payment-session', async (req, res) => {
+      const { sessionId } = req.query;
+      if (!sessionId) return res.status(400).json({ paid: false });
+
+      const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+      if (session.payment_status === "paid" && session.client_reference_id) {
+        await bookedSessionsCollection.updateOne(
+          { _id: new ObjectId(session.client_reference_id) },
+          { $set: { paid: true } }
+        );
+        return res.json({ paid: true });
+      } else {
+        return res.json({ paid: false });
+      }
+    });
+
+    await client.db("admin").command({ ping: 1 });
+    console.log("✅ Connected to MongoDB");
   } finally {
-    // Don't close the client
+    // keep connection open
   }
 }
 
 run().catch(console.dir);
 
 app.get('/', (req, res) => {
-  res.send('Studify server running!');
+  res.send('✅ Studify server running!');
 });
 
 app.listen(port, () => {
