@@ -19,12 +19,14 @@ const client = new MongoClient(uri, {
   },
 });
 
+//  Collections
 let sessionsCollection;
 let materialsCollection;
 let bookedSessionsCollection;
 let studentMaterialsCollection;
 let notesCollection;
 let usersCollection;
+let upgradeRequestsCollection;
 
 async function run() {
   try {
@@ -36,8 +38,9 @@ async function run() {
     studentMaterialsCollection = db.collection("studentMaterials");
     notesCollection = db.collection("notes");
     usersCollection = db.collection("users");
+    upgradeRequestsCollection = db.collection("upgradeRequests");
 
-    // ----- Sessions -----
+    //  Sessions
     app.post('/sessions', async (req, res) => {
       const session = req.body;
       const result = await sessionsCollection.insertOne(session);
@@ -49,7 +52,7 @@ async function run() {
       res.send(result);
     });
 
-    // ----- Materials -----
+    // Materials
     app.post('/materials', async (req, res) => {
       const material = req.body;
       const result = await materialsCollection.insertOne(material);
@@ -57,16 +60,11 @@ async function run() {
     });
 
     app.get('/materials', async (req, res) => {
-      try {
-        const viewMaterials = await materialsCollection.find().toArray();
-        res.send(viewMaterials);
-      } catch (error) {
-        console.error("Failed to get all materials", error);
-        res.status(500).send({ message: "Internal Server Error" });
-      }
+      const materials = await materialsCollection.find().toArray();
+      res.send(materials);
     });
 
-    // ----- Booked Sessions -----
+    //  Booked Sessions
     app.post('/booked-sessions', async (req, res) => {
       const bookedSession = req.body;
       const result = await bookedSessionsCollection.insertOne(bookedSession);
@@ -74,152 +72,176 @@ async function run() {
     });
 
     app.get('/booked-sessions', async (req, res) => {
-      try {
-        const bookedSessions = await bookedSessionsCollection.find().toArray();
-        res.send(bookedSessions);
-      } catch (error) {
-        console.error("Failed to get booked sessions:", error);
-        res.status(500).send({ message: "Internal Server Error" });
-      }
+      const bookedSessions = await bookedSessionsCollection.find().toArray();
+      res.send(bookedSessions);
     });
 
-    // ----- Student Materials -----
+    // Student Materials
     app.post('/student-materials', async (req, res) => {
       const material = req.body;
       material.createdAt = new Date();
-      try {
-        const result = await studentMaterialsCollection.insertOne(material);
-        res.send(result);
-      } catch (err) {
-        console.error(err);
-        res.status(500).send({ message: "Failed to add student material" });
-      }
+      const result = await studentMaterialsCollection.insertOne(material);
+      res.send(result);
     });
 
     app.get('/student-materials', async (req, res) => {
       const { userEmail } = req.query;
       if (!userEmail) return res.status(400).send({ message: "Missing userEmail" });
-      try {
-        const materials = await studentMaterialsCollection.find({ userEmail }).toArray();
-        res.send(materials);
-      } catch (err) {
-        console.error(err);
-        res.status(500).send({ message: "Failed to get student materials" });
-      }
+      const materials = await studentMaterialsCollection.find({ userEmail }).toArray();
+      res.send(materials);
     });
 
-    // ----- Notes -----
+    //  Notes
     app.post('/notes', async (req, res) => {
       const note = req.body;
       if (!note.userEmail || !note.title || !note.content) {
         return res.status(400).send({ message: "Missing required fields" });
       }
-      note.createdAt = note.createdAt || new Date();
-      try {
-        const result = await notesCollection.insertOne(note);
-        res.send(result);
-      } catch (err) {
-        console.error("Failed to create note:", err);
-        res.status(500).send({ message: "Failed to create note" });
-      }
+      note.createdAt = new Date();
+      const result = await notesCollection.insertOne(note);
+      res.send(result);
     });
 
     app.get('/notes', async (req, res) => {
       const { userEmail } = req.query;
       if (!userEmail) return res.status(400).send({ message: "Missing userEmail" });
-      try {
-        const notes = await notesCollection.find({ userEmail }).toArray();
-        res.send(notes);
-      } catch (err) {
-        console.error("Failed to fetch notes:", err);
-        res.status(500).send({ message: "Failed to fetch notes" });
-      }
+      const notes = await notesCollection.find({ userEmail }).toArray();
+      res.send(notes);
     });
 
-    // ----- Users -----
-    // Create user with optional role (default "student")
+    //  Users
     app.post('/users', async (req, res) => {
       const user = req.body;
-      if (!user.name || !user.email) {
-        return res.status(400).send({ message: "Missing name or email" });
+
+      if (
+        !user.name || 
+        !user.email || 
+        user.name.trim().length === 0 || 
+        user.name.trim().toUpperCase() === "N/A"
+      ) {
+        return res.status(400).send({ message: "Missing or invalid name or email" });
       }
 
-      user.role = user.role || "student"; 
+      user.role = user.role || "student";
       user.createdAt = new Date();
 
-      try {
-        const existingUser = await usersCollection.findOne({ email: user.email });
-        if (existingUser) {
-          return res.status(409).send({ message: "User already exists" });
-        }
-        const result = await usersCollection.insertOne(user);
-        res.send(result);
-      } catch (err) {
-        console.error("Failed to create user:", err);
-        res.status(500).send({ message: "Failed to create user" });
-      }
+      const existing = await usersCollection.findOne({ email: user.email });
+      if (existing) return res.status(409).send({ message: "User already exists" });
+
+      const result = await usersCollection.insertOne(user);
+      res.send(result);
     });
 
-    // Get all users
+    // all users
     app.get('/users', async (req, res) => {
       try {
         const users = await usersCollection.find().toArray();
         res.send(users);
       } catch (err) {
-        console.error("Failed to get users:", err);
-        res.status(500).send({ message: "Internal Server Error" });
+        res.status(500).send({ message: 'Error fetching users', error: err.message });
       }
     });
 
-    // Get single user by email
     app.get('/users/:email', async (req, res) => {
       const email = req.params.email;
-      try {
-        const user = await usersCollection.findOne({ email });
-        if (!user) {
-          return res.status(404).send({ message: "User not found" });
-        }
-        res.send(user);
-      } catch (err) {
-        console.error("Failed to get user:", err);
-        res.status(500).send({ message: "Internal Server Error" });
-      }
+      const user = await usersCollection.findOne({ email });
+      if (!user) return res.status(404).send({ message: "User not found" });
+      res.send(user);
     });
 
-    // Update user role by id
     app.patch('/users/:id/role', async (req, res) => {
       const userId = req.params.id;
       const { role } = req.body;
-      if (!role) {
-        return res.status(400).send({ message: "Missing role in request body" });
+      if (!role) return res.status(400).send({ message: "Missing role" });
+      const result = await usersCollection.updateOne(
+        { _id: new ObjectId(userId) },
+        { $set: { role } }
+      );
+      if (result.matchedCount === 0) {
+        return res.status(404).send({ message: "User not found" });
       }
-      try {
-        const result = await usersCollection.updateOne(
-          { _id: new ObjectId(userId) },
-          { $set: { role } }
-        );
-        if (result.matchedCount === 0) {
-          return res.status(404).send({ message: "User not found" });
-        }
-        res.send({ message: "Role updated successfully" });
-      } catch (err) {
-        console.error("Failed to update user role:", err);
-        res.status(500).send({ message: "Failed to update user role" });
-      }
+      res.send({ message: "Role updated successfully" });
     });
 
+    //  Upgrade Request - student sends request
+    app.post('/upgrade-request', async (req, res) => {
+      const { userEmail, message } = req.body;
+      if (!userEmail) return res.status(400).json({ message: "Missing userEmail" });
+
+      const user = await usersCollection.findOne({ email: userEmail });
+      if (!user) return res.status(404).json({ message: "User not found" });
+
+      const existing = await upgradeRequestsCollection.findOne({
+        userId: user._id.toString(),
+        status: "pending"
+      });
+
+      if (existing) return res.status(400).json({ message: "Upgrade request already pending" });
+
+      const newRequest = {
+        userId: user._id.toString(),
+        message: message || "No message provided",
+        status: "pending",
+        createdAt: new Date(),
+      };
+
+      await upgradeRequestsCollection.insertOne(newRequest);
+      res.status(201).json({ message: "Upgrade request submitted", request: newRequest });
+    });
+
+    //  Admin - Get all upgrade requests
+    app.get('/admin/upgrade-requests', async (req, res) => {
+      const requests = await upgradeRequestsCollection.find().toArray();
+      res.send(requests);
+    });
+
+    // Admin - Approve request by ID
+    app.post('/admin/upgrade-requests/:id/approve', async (req, res) => {
+      const requestId = req.params.id;
+
+      const request = await upgradeRequestsCollection.findOne({ _id: new ObjectId(requestId) });
+      if (!request) return res.status(404).json({ message: "Upgrade request not found" });
+
+      await upgradeRequestsCollection.updateOne(
+        { _id: new ObjectId(requestId) },
+        { $set: { status: "approved" } }
+      );
+
+      await usersCollection.updateOne(
+        { _id: new ObjectId(request.userId) },
+        { $set: { role: "mentor" } }
+      );
+
+      res.send({ message: "Request approved & user upgraded to mentor." });
+    });
+    // Admin - Reject request by ID
+app.post('/admin/upgrade-requests/:id/reject', async (req, res) => {
+  const requestId = req.params.id;
+
+  const request = await upgradeRequestsCollection.findOne({ _id: new ObjectId(requestId) });
+  if (!request) return res.status(404).json({ message: "Upgrade request not found" });
+
+  await upgradeRequestsCollection.updateOne(
+    { _id: new ObjectId(requestId) },
+    { $set: { status: "rejected" } }
+  );
+
+  res.send({ message: "Request rejected." });
+});
+
     await client.db("admin").command({ ping: 1 });
-    console.log("Connected to MongoDB!");
+    console.log("Connected to MongoDB");
   } finally {
-    // Connection stays open
+    // Don't close the client
   }
 }
+
 run().catch(console.dir);
 
 app.get('/', (req, res) => {
-  res.send('Studify running...');
+  res.send('Studify server running!');
 });
 
 app.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
+  console.log(`✅ Server listening on port ${port}`);
 });
