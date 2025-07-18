@@ -26,6 +26,7 @@ let materialsCollection;
 let bookedSessionsCollection;
 let studentMaterialsCollection;
 let notesCollection;
+let usersCollection;
 
 
 async function run() {
@@ -38,6 +39,7 @@ async function run() {
     bookedSessionsCollection = db.collection("bookedSessions");
     studentMaterialsCollection = db.collection("studentMaterials");
      notesCollection = db.collection("notes"); 
+     usersCollection = db.collection("users");
 
     // Create Session
   app.post('/sessions', async (req, res) => {
@@ -149,6 +151,43 @@ app.get('/student-materials', async (req, res) => {
         res.status(500).send({ message: "Failed to fetch notes" });
       }
     });
+
+   // POST new user
+app.post('/users', async (req, res) => {
+  const user = req.body;
+  if (!user.name || !user.email) {
+    return res.status(400).send({ message: "Missing name or email" });
+  }
+
+  user.role = "student"; 
+  user.createdAt = new Date();
+
+  try {
+    const existingUser = await usersCollection.findOne({ email: user.email });
+    if (existingUser) {
+      return res.status(409).send({ message: "User already exists" });
+    }
+
+    const result = await usersCollection.insertOne(user);
+    res.send(result);
+  } catch (err) {
+    console.error("Failed to create user:", err);
+    res.status(500).send({ message: "Failed to create user" });
+  }
+});
+
+// GET all users
+app.get('/users', async (req, res) => {
+  try {
+    const users = await usersCollection.find().toArray();
+    res.send(users);
+  } catch (err) {
+    console.error("Failed to get users:", err);
+    res.status(500).send({ message: "Internal Server Error" });
+  }
+});
+
+
 
 
 
