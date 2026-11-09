@@ -15,9 +15,17 @@
     "cors": "^2.8.5",
     "dotenv": "^17.2.0",
     "express": "^5.1.0",
-    "firebase-admin": "^13.4.0",
+    "firebase-admin": "^14.5.0",
     "jsonwebtoken": "^9.0.2",
     "mongodb": "^6.17.0",
     "stripe": "^18.3.0"
+  },
+  "overrides": {
+  "jsonwebtoken": {
+    "jws": "3.2.3"
+  },
+  "google-gax": {
+    "rimraf": "6.1.4"
   }
+}
 }
